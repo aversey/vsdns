@@ -4,10 +4,9 @@
 
 int main()
 {
-    struct dns_answers *ans = dns_get("10.1.1.1",
-                                      "veresov.pro",
-                                      dns_type_mx);
     struct dns_answers *cur;
+    const char         *router = "10.1.1.1"; /* place here your one */
+    struct dns_answers *ans    = dns_get(router, "veresov.pro", dns_type_a);
     for (cur = ans; cur; cur = cur->next) {
         if (cur->type == dns_type_a) {
             unsigned char *ip = cur->data;

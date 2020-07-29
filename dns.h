@@ -1,12 +1,12 @@
-#ifndef DNS_INCLUDED
-#define DNS_INCLUDED
+#ifndef NEWBIEDNS_INCLUDED
+#define NEWBIEDNS_INCLUDED
 
 
 enum {  /* Some of DNS types: */
-    dns_type_a = 1,
+    dns_type_a     = 1,
     dns_type_cname = 5,
-    dns_type_mx = 15,
-    dns_type_txt = 16
+    dns_type_mx    = 15,
+    dns_type_txt   = 16
 };
 
 struct dns_answers {
