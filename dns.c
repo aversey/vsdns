@@ -174,6 +174,24 @@ static struct dns_answers *get_answers(char **reader, char *packet, int num)
         *((unsigned short *) res->data) = pref;
         memcpy(res->data + 2, name, strlen(name) + 1);
         free(name);
+    } else if (res->type == dns_type_srv) {
+        char *name;
+        unsigned short priority;
+        unsigned short weight;
+        unsigned short port;
+        priority  = ntohs(*((unsigned short *) *reader));
+        *reader  += 2;
+        weight    = ntohs(*((unsigned short *) *reader));
+        *reader  += 2;
+        port      = ntohs(*((unsigned short *) *reader));
+        *reader  += 2;
+        name      = read_name(reader, packet);
+        res->data = malloc(7 + strlen(name));
+        ((unsigned short *) res->data)[0] = priority;
+        ((unsigned short *) res->data)[1] = weight;
+        ((unsigned short *) res->data)[2] = port;
+        memcpy(res->data + 6, name, strlen(name) + 1);
+        free(name);
     } else {
         if (res->type == dns_type_txt) {
             res->size--;
@@ -208,14 +226,35 @@ static struct dns_answers *get(int sock, struct sockaddr_in *a)
 }
 
 
+char *dns_mx_server(void *data)
+{
+    return ((char *) data) + 2;
+}
+
 int dns_mx_preference(void *data)
 {
     return *((unsigned short *) data);
 }
 
-char *dns_mx_server(void *data)
+
+char *dns_srv_server(void *data)
 {
-    return ((char *) data) + 2;
+    return ((char *) data) + 6;
+}
+
+int dns_srv_port(void *data)
+{
+    return ((unsigned short *) data)[2];
+}
+
+int dns_srv_priority(void *data)
+{
+    return *((unsigned short *) data);
+}
+
+int dns_srv_weight(void *data)
+{
+    return ((unsigned short *) data)[1];
 }
 
 
