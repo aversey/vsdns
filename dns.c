@@ -18,6 +18,7 @@ struct header {
     int is_response:          1;
     int opcode:               4;
     int is_authanswer:        1;
+    int is_truncated:         1;
     int is_recursion_desired: 1;
     */
 
@@ -80,7 +81,7 @@ static void fill_question(char **writer, int query_type)
     *writer += sizeof(*q);
 }
 
-static int ask(const char *s, const char *h, int qt, struct sockaddr_in *a)
+static int askudp(const char *s, const char *h, int qt, struct sockaddr_in *a)
 {
     int sent;
     int plen = sizeof(struct header) + strlen(h) + 2 +
@@ -88,6 +89,9 @@ static int ask(const char *s, const char *h, int qt, struct sockaddr_in *a)
     char *packet       = malloc(plen);
     char *writer       = packet;
     int   sock         = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock < 0) {
+        return 0;
+    }
     a->sin_family      = AF_INET;
     a->sin_port        = htons(53);
     a->sin_addr.s_addr = inet_addr(s);
@@ -102,6 +106,84 @@ static int ask(const char *s, const char *h, int qt, struct sockaddr_in *a)
         return 0;
     }
     return sock;
+}
+
+static int asktcp(const char *s, const char *h, int qt)
+{
+    struct sockaddr_in a;
+    int sent;
+    int plen = sizeof(struct header) + strlen(h) + 4 +
+               sizeof(struct question_header);
+    char *packet       = malloc(plen);
+    char *writer       = packet;
+    int   sock         = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sock < 0) {
+        return 0;
+    }
+    a.sin_family       = AF_INET;
+    a.sin_port         = htons(53);
+    a.sin_addr.s_addr  = inet_addr(s);
+    if (connect(sock, (struct sockaddr *) &a, sizeof(a))) {
+        return 0;
+    }
+
+    writer += 2;
+    fill_header(&writer);
+    fill_name(&writer, h);
+    fill_question(&writer, qt);
+    *((unsigned short *) packet) = htons(writer - packet - 2);
+
+    sent = write(sock, packet, plen);
+    free(packet);
+    if (sent != plen) {
+        return 0;
+    }
+    return sock;
+}
+
+static char *gettcp(int sock)
+{
+    short size;
+    char *packet;
+    if (!sock) {
+        return 0;
+    }
+    if (read(sock, &size, 2) < 0) {
+        close(sock);
+        return 0;
+    }
+    size   = ntohs(size);
+    packet = malloc(size);
+    if (read(sock, packet, size) < 0) {
+        close(sock);
+        free(packet);
+        return 0;
+    }
+    close(sock);
+    return packet;
+}
+
+static char *get(const char *s, const char *h, int qt)
+{
+    struct sockaddr_in a;
+    char     *packet;
+    socklen_t slen = sizeof(a);
+    int       sock = askudp(s, h, qt, &a);
+    if (!sock) {
+        return 0;
+    }
+    packet   = malloc(512);
+    if (recvfrom(sock, packet, 512, 0, (struct sockaddr *) &a, &slen) < 0) {
+        free(packet);
+        close(sock);
+        return 0;
+    } else if (packet[2] & 0b10) {
+        free(packet);
+        close(sock);
+        return gettcp(asktcp(s, h, qt));
+    }
+    close(sock);
+    return packet;
 }
 
 
@@ -205,24 +287,21 @@ static struct dns_answers *get_answers(char **reader, char *packet, int num)
     return res;
 }
 
-static struct dns_answers *get(int sock, struct sockaddr_in *a)
+static struct dns_answers *parse(char *packet)
 {
-    char           packet[512];
+    struct dns_answers *res;
     char          *reader = packet;
-    struct header *head;
-    socklen_t      slen = sizeof(*a);
-    if (!sock) {
+    struct header *head   = (struct header *) reader;
+    if (!packet) {
         return 0;
     }
-    if (recvfrom(sock, packet, 512, 0, (struct sockaddr *) a, &slen) < 0) {
-        return 0;
-    }
-    head            = (struct header *) reader;
-    head->questions = ntohs(head->questions);
-    head->answers   = ntohs(head->answers);
-    reader         += sizeof(*head);
+    head->questions       = ntohs(head->questions);
+    head->answers         = ntohs(head->answers);
+    reader               += sizeof(*head);
     skip_questions(&reader, head->questions);
-    return get_answers(&reader, packet, head->answers);
+    res = get_answers(&reader, packet, head->answers);
+    free(packet);
+    return res;
 }
 
 
@@ -260,8 +339,7 @@ int dns_srv_weight(void *data)
 
 struct dns_answers *dns_get(const char *server, const char *host, int query)
 {
-    struct sockaddr_in addr;
-    return get(ask(server, host, query, &addr), &addr);
+    return parse(get(server, host, query));
 }
 
 void dns_free(struct dns_answers *answers)
