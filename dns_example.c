@@ -5,8 +5,8 @@
 int main()
 {
     struct dns_answers *cur;
-    const char         *server = "8.8.8.8"; /* place your favourite one */
-    struct dns_answers *ans    = dns_get(server, "veresov.pro", dns_type_txt);
+    const char         *server = "1.1.1.1"; /* place your favourite one */
+    struct dns_answers *ans    = dns_get(server, "veresov.pro", dns_type_a);
     for (cur = ans; cur; cur = cur->next) {
         if (cur->type == dns_type_a) {
             unsigned char *ip = cur->data;
