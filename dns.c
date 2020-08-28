@@ -10,6 +10,10 @@
 #include <fcntl.h>
 
 
+/* Entry point is dns_get. */
+
+
+/* Read about DNS in RFC 1034 & 1035. */
 struct header {
     unsigned short id;
 
@@ -48,18 +52,23 @@ struct resource_header {
 };
 
 
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ * get-related
+ */
 static void fill_header(char **writer)
 {
     struct header *head = (struct header *) *writer;
     memset(head, 0, sizeof(*head));
+    /* PID is unique enough to use it as ID: */
     head->id        = (unsigned short) htons(getpid());
-    head->a         = 0b00000001;
-    head->questions = htons(1);
-    *writer += sizeof(*head);
+    head->a         = 0b00000001;  /* recursion desired */
+    head->questions = htons(1);    /* we have one question */
+    *writer        += sizeof(*head);
 }
 
 static void fill_name(char **writer, const char *host)
-{
+{  /* In DNS names are always starting with dot,
+    * so 'example.com' need to become '.example.com'. */
     char *last = *writer;
     do {
         if (*host == '.' || !*host) {
@@ -82,7 +91,7 @@ static void fill_question(char **writer, int query_type)
 }
 
 static int askudp(const char *s, const char *h, int qt, struct sockaddr_in *a)
-{
+{  /* Create socket, fill in the question and send it. */
     int sent;
     int plen = sizeof(struct header) + strlen(h) + 2 +
                sizeof(struct question_header);
@@ -96,10 +105,12 @@ static int askudp(const char *s, const char *h, int qt, struct sockaddr_in *a)
     a->sin_port        = htons(53);
     a->sin_addr.s_addr = inet_addr(s);
 
+    /* Socket created, now fill in the question. */
     fill_header(&writer);
     fill_name(&writer, h);
     fill_question(&writer, qt);
 
+    /* Question is filled in, so send it. */
     sent = sendto(sock, packet, plen, 0, (struct sockaddr *) a, sizeof(*a));
     free(packet);
     if (sent != plen) {
@@ -109,14 +120,14 @@ static int askudp(const char *s, const char *h, int qt, struct sockaddr_in *a)
 }
 
 static int asktcp(const char *s, const char *h, int qt)
-{
+{  /* Create socket, fill in the question and send it. */
     struct sockaddr_in a;
     int sent;
     int plen = sizeof(struct header) + strlen(h) + 4 +
                sizeof(struct question_header);
-    char *packet       = malloc(plen);
-    char *writer       = packet;
-    int   sock         = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    char *packet = malloc(plen);
+    char *writer = packet;
+    int   sock   = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (sock < 0) {
         return 0;
     }
@@ -127,12 +138,15 @@ static int asktcp(const char *s, const char *h, int qt)
         return 0;
     }
 
+    /* Socket created, now fill in the question.
+       Note the difference from UDP: TCP has size in the start. */
     writer += 2;
     fill_header(&writer);
     fill_name(&writer, h);
     fill_question(&writer, qt);
     *((unsigned short *) packet) = htons(writer - packet - 2);
 
+    /* Question is filled in, so send it. */
     sent = write(sock, packet, plen);
     free(packet);
     if (sent != plen) {
@@ -164,7 +178,7 @@ static char *gettcp(int sock)
 }
 
 static char *get(const char *s, const char *h, int qt)
-{
+{ /* Get response in UDP, if it is truncated do it in TCP. */
     struct sockaddr_in a;
     char     *packet;
     socklen_t slen = sizeof(a);
@@ -172,12 +186,12 @@ static char *get(const char *s, const char *h, int qt)
     if (!sock) {
         return 0;
     }
-    packet   = malloc(512);
+    packet = malloc(512);  /* Max size of UDP is 512 bytes. */
     if (recvfrom(sock, packet, 512, 0, (struct sockaddr *) &a, &slen) < 0) {
         free(packet);
         close(sock);
         return 0;
-    } else if (packet[2] & 0b10) {
+    } else if (packet[2] & 0b10) {  /* is truncated */
         free(packet);
         close(sock);
         return gettcp(asktcp(s, h, qt));
@@ -187,6 +201,9 @@ static char *get(const char *s, const char *h, int qt)
 }
 
 
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ * parse-related
+ */
 static void skip_questions(char **reader, int num)
 {
     for (; num; --num) {
@@ -195,10 +212,14 @@ static void skip_questions(char **reader, int num)
     }
 }
 
-static char *read_name(char **extrareader, char *packet)
-{
+static char *read_name(char **extreader, char *packet)
+{  /* Names are stored in binary format:
+    * length followed by name part (string between dots),
+    * length of zero means end of domain name,
+    * and length >= 192 means it will be followed by absolute link,
+    * name readed from link should be inserted instead of this part. */
     char *name   = malloc(256);  /* cannot be more =) */
-    char *reader = *extrareader;
+    char *reader = *extreader;
     char *writer = name;
     int   jumped = 0;
     if (!*reader) {
@@ -210,7 +231,7 @@ static char *read_name(char **extrareader, char *packet)
         if (len >= 192) {
             int jump = ((unsigned char) *reader) + (len - 192) * 256;
             if (!jumped) {
-                *extrareader += 2;
+                *extreader += 2;
                 jumped        = 1;
             }
             reader = packet + jump;
@@ -220,43 +241,49 @@ static char *read_name(char **extrareader, char *packet)
         writer += len;
         reader += len;
         if (!jumped) {
-            *extrareader += len + 1;
+            *extreader += len + 1;
         }
         *writer++ = '.';
     }
     if (!jumped) {
-        ++*extrareader;
+        ++*extreader;
     }
     *--writer = 0;
     return name;
 }
 
 static struct dns_answers *get_answers(char **reader, char *packet, int num)
-{
+{  /* Read all (num) answers into res and return it. */
     struct dns_answers     *res;
     struct resource_header *head;
-    if (!num) {
+    if (!num) {  /* no answers left to read */
         return 0;
     }
+    /* Read one answer, starting with header: */
     res       = malloc(sizeof(*res));
     res->host = read_name(reader, packet);
     head      = (struct resource_header *) *reader;
     res->type = ntohs(head->type);
     res->size = ntohs(head->datalen);
     *reader  += 10;
+    /* Analyse answer data based on answer type: */
     if (res->type == dns_type_cname) {
+        /* For CNAME data is just domain name: */
         res->size--;
         res->data = read_name(reader, packet);
     } else if (res->type == dns_type_mx) {
+        /* For MX data is record preference, followed by its name: */
         char *name;
         unsigned short pref = ntohs(*((unsigned short *) *reader));
         *reader  += 2;
         name      = read_name(reader, packet);
-        res->data = malloc(3 + strlen(name));
+        res->data = malloc(2 + strlen(name) + 1);
         *((unsigned short *) res->data) = pref;
         memcpy(res->data + 2, name, strlen(name) + 1);
         free(name);
     } else if (res->type == dns_type_srv) {
+        /* For SRV data is record priority, weight and port
+         * followed by its name. */
         char *name;
         unsigned short priority;
         unsigned short weight;
@@ -275,7 +302,9 @@ static struct dns_answers *get_answers(char **reader, char *packet, int num)
         memcpy(res->data + 6, name, strlen(name) + 1);
         free(name);
     } else {
+        /* For other types just copy the data: */
         if (res->type == dns_type_txt) {
+            /* Skipping leading length byte for TXT: */
             res->size--;
             ++*reader;
         }
@@ -283,6 +312,7 @@ static struct dns_answers *get_answers(char **reader, char *packet, int num)
         memcpy(res->data, *reader, res->size);
         *reader += res->size;
     }
+    /* Start recursion for the rest of answers and add them as next: */
     res->next = get_answers(reader, packet, num - 1);
     return res;
 }
@@ -295,9 +325,9 @@ static struct dns_answers *parse(char *packet)
     if (!packet) {
         return 0;
     }
-    head->questions       = ntohs(head->questions);
-    head->answers         = ntohs(head->answers);
-    reader               += sizeof(*head);
+    head->questions = ntohs(head->questions);
+    head->answers   = ntohs(head->answers);
+    reader         += sizeof(*head);
     skip_questions(&reader, head->questions);
     res = get_answers(&reader, packet, head->answers);
     free(packet);
@@ -305,6 +335,9 @@ static struct dns_answers *parse(char *packet)
 }
 
 
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ * MX utility
+ */
 char *dns_mx_server(void *data)
 {
     return ((char *) data) + 2;
@@ -316,6 +349,9 @@ int dns_mx_preference(void *data)
 }
 
 
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ * SRV utility
+ */
 char *dns_srv_server(void *data)
 {
     return ((char *) data) + 6;
@@ -337,8 +373,11 @@ int dns_srv_weight(void *data)
 }
 
 
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ * Constructor and destructor
+ */
 struct dns_answers *dns_get(const char *server, const char *host, int query)
-{
+{  /* Acquire response in get and parse it. */
     return parse(get(server, host, query));
 }
 

@@ -1,0 +1,27 @@
+    Description
+DNS made simple.
+
+    Overview
+NewbieDNS is FOSS: legal info is in the 'LICENSE' file.
+It is written in ANSI C for UNIX-like environment (Linux, OS X, ...).
+NewbieDNS is a module, not a library, so it is intended to be changed
+as you wish and included directly into code of your project.
+
+    Compiling
+Compilation is described in Makefile, however it is mostly about flags,
+since the thing is so simple.  Type 'make' to produce working example.
+
+    Example
+The example prints response for A record from 1.1.1.1 DNS server for
+veresov.pro domain in human-readable form (so the response is parsed).
+
+    Usage
+The module presents response in dns_answers, which is a linked list.
+Function dns_get request given server about given domain name for
+given record type (dns_type_*) and returns parsed response.
+You can step through it to process all answers, each answer has
+some way of accessing its fields.
+Don't forget to free memory after use with dns_free.
+
+    Motivation
+DNS deserves understandable implementation.
