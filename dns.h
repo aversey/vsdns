@@ -1,5 +1,5 @@
-#ifndef NEWBIEDNS_INCLUDED
-#define NEWBIEDNS_INCLUDED
+#ifndef NEWBIE_DNS_INCLUDED
+#define NEWBIE_DNS_INCLUDED
 
 
 enum {  /* Some of DNS types: */
