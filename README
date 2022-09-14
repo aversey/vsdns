@@ -2,7 +2,7 @@
 DNS made simple.
 
     Overview
-NewbieDNS is FOSS: legal info is in the 'LICENSE' file.
+VSDNS is FOSS: legal info is in the 'LICENSE' file.
 It is written in ANSI C for UNIX-like environment (Linux, OS X, ...).
 NewbieDNS is a module, not a library, so it is intended to be changed
 as you wish and included directly into code of your project.
